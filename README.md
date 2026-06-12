@@ -33,25 +33,46 @@ SPA_DEMO=1 ./run.sh
 Open <http://localhost:8000>. You'll get a fake spa whose water temperature
 drifts toward whatever setpoint you choose — handy for trying the UI.
 
-## Connect to your real spa
+## Use it from your phone (home wifi)
 
-Run it on a device on the same network as the spa:
+This is the intended setup: run the app on any always-on computer at home, and
+open it in your phone's web browser while you're on the same wifi.
 
-```bash
-pip install -r requirements.txt
-./run.sh
-```
+1. On a home computer (laptop, mini-PC, NAS, Raspberry Pi…) on the same network
+   as the spa:
+   ```bash
+   pip install -r requirements.txt
+   ./run.sh
+   ```
+2. Find that computer's local IP address (e.g. `192.168.1.20`):
+   - macOS/Linux: `hostname -I` or `ipconfig getifaddr en0`
+   - Windows: `ipconfig` → IPv4 Address
+3. On your phone's browser (on the same wifi) go to:
+   ```
+   http://192.168.1.20:8000
+   ```
+4. **Add to Home Screen** so it opens fullscreen like an app:
+   - iPhone (Safari): Share → *Add to Home Screen*
+   - Android (Chrome): ⋮ menu → *Add to Home screen / Install app*
 
-Then open `http://<that-device-ip>:8000` from your phone.
+The app already binds to `0.0.0.0`, so it's reachable from other devices on your
+network. It includes a web app manifest and icons, so the home-screen shortcut
+gets a proper name and icon.
 
-The app auto‑discovers the spa via a UDP broadcast. If your spa is on a
-different subnet/VLAN (so broadcast doesn't reach it), pin its IP address:
+> **Note:** this works while your phone is on your home wifi. It does **not**
+> work over cellular/away from home — the spa only speaks its protocol on the
+> local network, and unlike the official Gecko app there's no public cloud relay
+> to use. If you later want remote access, run this on an always-on home device
+> and reach it via a VPN such as [Tailscale](https://tailscale.com/).
+
+If your spa is on a different subnet/VLAN (so auto-discovery's broadcast doesn't
+reach it), pin its IP address:
 
 ```bash
 SPA_ADDRESS=192.168.1.50 ./run.sh
 ```
 
-It keeps retrying discovery in the background, so it's fine to start the app
+The app keeps retrying discovery in the background, so it's fine to start it
 before the spa is reachable; the UI shows the connection state.
 
 ## Configuration
