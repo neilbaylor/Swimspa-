@@ -29,6 +29,30 @@ def _step_for_unit(unit: str) -> float:
     return 1.0 if "F" in (unit or "").upper() else 0.5
 
 
+def _device_dict(kind: str, dev) -> dict:
+    """Normalise a geckolib pump/light/blower into a UI-friendly dict."""
+    modes = list(getattr(dev, "modes", None) or [])
+    return {
+        "id": dev.unique_id,
+        "name": dev.name,
+        "kind": kind,
+        "is_on": bool(getattr(dev, "is_on", False)),
+        "mode": getattr(dev, "mode", None),  # pumps only; None otherwise
+        "modes": modes,  # pumps only; [] otherwise
+    }
+
+
+async def _apply_device(dev, *, mode: str | None, on: bool | None) -> None:
+    """Apply a requested change to a geckolib device."""
+    if mode is not None and hasattr(dev, "async_set_mode"):
+        await dev.async_set_mode(mode)
+    elif on is not None:
+        if on and hasattr(dev, "async_turn_on"):
+            await dev.async_turn_on()
+        elif not on and hasattr(dev, "async_turn_off"):
+            await dev.async_turn_off()
+
+
 class SpaController:
     """Talks to a real Gecko spa via geckolib over the local network."""
 
@@ -97,12 +121,36 @@ class SpaController:
             return None
         return wh
 
+    def _iter_devices(self):
+        """Yield (kind, device) for every controllable accessory."""
+        if self._facade is None:
+            return
+        for pump in getattr(self._facade, "pumps", None) or []:
+            yield "pump", pump
+        for light in getattr(self._facade, "lights", None) or []:
+            yield "light", light
+        for blower in getattr(self._facade, "blowers", None) or []:
+            yield "blower", blower
+
+    def _devices(self) -> list[dict]:
+        devices = []
+        for kind, dev in self._iter_devices():
+            devices.append(_device_dict(kind, dev))
+        return devices
+
+    def _find_device(self, device_id: str):
+        for _kind, dev in self._iter_devices():
+            if dev.unique_id == device_id:
+                return dev
+        return None
+
     def status(self) -> dict:
         wh = self._water_heater()
         if wh is None:
             return {
                 "connected": False,
                 "spa_name": self._safe_spa_name(),
+                "devices": [],
                 "error": self._last_error or "Connecting to spa...",
             }
         unit = wh.temperature_unit
@@ -116,8 +164,16 @@ class SpaController:
             "unit": unit,
             "operation": wh.current_operation,
             "step": _step_for_unit(unit),
+            "devices": self._devices(),
             "error": None,
         }
+
+    async def set_device(self, device_id: str, *, mode=None, on=None) -> dict:
+        dev = self._find_device(device_id)
+        if dev is not None:
+            async with self._lock:
+                await _apply_device(dev, mode=mode, on=on)
+        return self.status()
 
     async def set_temperature(self, value: float) -> dict:
         wh = self._water_heater()
@@ -165,6 +221,29 @@ class DemoSpaController:
         self._current = 98.0
         self._lock = asyncio.Lock()
         self._task: asyncio.Task | None = None
+        # Fake accessories so the device controls can be exercised.
+        self._devices_state: dict[str, dict] = {
+            "pump-1": {"id": "pump-1", "name": "Jet Pump 1", "kind": "pump",
+                       "mode": "OFF", "modes": ["OFF", "LO", "HI"]},
+            "pump-2": {"id": "pump-2", "name": "Jet Pump 2", "kind": "pump",
+                       "mode": "OFF", "modes": ["OFF", "HI"]},
+            "blower-1": {"id": "blower-1", "name": "Blower", "kind": "blower",
+                         "on": False},
+            "light-1": {"id": "light-1", "name": "Lights", "kind": "light",
+                        "on": False},
+        }
+
+    def _device_list(self) -> list[dict]:
+        out = []
+        for d in self._devices_state.values():
+            if d["kind"] == "pump":
+                out.append({"id": d["id"], "name": d["name"], "kind": "pump",
+                            "is_on": d["mode"] != "OFF", "mode": d["mode"],
+                            "modes": d["modes"]})
+            else:
+                out.append({"id": d["id"], "name": d["name"], "kind": d["kind"],
+                            "is_on": d["on"], "mode": None, "modes": []})
+        return out
 
     async def start(self) -> None:
         self._task = asyncio.ensure_future(self._drift())
@@ -196,9 +275,21 @@ class DemoSpaController:
             "unit": self._unit,
             "operation": self._operation(),
             "step": _step_for_unit(self._unit),
+            "devices": self._device_list(),
             "error": None,
             "demo": True,
         }
+
+    async def set_device(self, device_id: str, *, mode=None, on=None) -> dict:
+        d = self._devices_state.get(device_id)
+        if d is not None:
+            async with self._lock:
+                if d["kind"] == "pump" and mode is not None:
+                    if mode in d["modes"]:
+                        d["mode"] = mode
+                elif on is not None:
+                    d["on"] = bool(on)
+        return self.status()
 
     async def set_temperature(self, value: float) -> dict:
         async with self._lock:

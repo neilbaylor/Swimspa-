@@ -66,6 +66,14 @@ async def set_temperature(payload: dict):
     return await app.state.controller.set_temperature(float(payload["value"]))
 
 
+@app.post("/api/device/{device_id}")
+async def set_device(device_id: str, payload: dict):
+    """Control a pump/light/blower. Body: {"mode": "HI"} or {"on": true}."""
+    return await app.state.controller.set_device(
+        device_id, mode=payload.get("mode"), on=payload.get("on")
+    )
+
+
 @app.get("/")
 async def index():
     return FileResponse(FRONTEND_DIR / "index.html")
